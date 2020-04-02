@@ -63,6 +63,12 @@ void AsyncUsbTransceiverBase::TransferCompleteInternal(
   }
 
   TransferComplete(transfer);
+
+  {
+    ola::thread::MutexLocker locker(&m_mutex);
+    if (m_inflight.empty())
+      m_cond.Signal();
+  }
 }
 
 AsyncUsbTransceiverBase::AsyncUsbTransceiverBase(LibUsbAdaptor *adaptor,
@@ -81,8 +87,6 @@ AsyncUsbTransceiverBase::AsyncUsbTransceiverBase(LibUsbAdaptor *adaptor,
 
 AsyncUsbTransceiverBase::~AsyncUsbTransceiverBase() {
   ola::thread::MutexLocker locker(&m_mutex);
-
-  CancelTransfer();
 
   m_adaptor->UnrefDevice(m_usb_device);
 
@@ -117,6 +121,13 @@ void AsyncUsbTransceiverBase::CancelTransfer() {
       OLA_WARN << "libusb_cancel_transfer returned "
                << m_adaptor->ErrorCodeToString(ret);
     }
+  }
+
+  while (!m_inflight.empty()) {
+    /* Wait for cancelled transfers to complete. Not waiting for the
+     * callbacks to happen is undefined behaviour according to libusb
+     * docs. */
+    m_cond.Wait(&m_mutex);
   }
 }
 
